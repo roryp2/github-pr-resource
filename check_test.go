@@ -137,6 +137,34 @@ func TestCheck(t *testing.T) {
 				resource.NewVersion(testPullRequests[1]),
 			},
 		},
+		{
+			description: "check returns pr if pr number does match specified one and no previous version",
+			source: resource.Source{
+				Repository:   "itsdalmo/test-repository",
+				AccessToken:  "oauthtoken",
+				DisableForks: true,
+				PR: "3",
+			},
+			version:      resource.Version{},
+			pullRequests: testPullRequests,
+			expected: resource.CheckResponse{
+				resource.NewVersion(testPullRequests[2]),
+			},
+		},
+		{
+			description: "check returns pr if pr number does match specified one and has previous version",
+			source: resource.Source{
+				Repository:   "itsdalmo/test-repository",
+				AccessToken:  "oauthtoken",
+				DisableForks: true,
+				PR: "3",
+			},
+			version:      resource.NewVersion(testPullRequests[2]),
+			pullRequests: testPullRequests,
+			expected: resource.CheckResponse{
+				resource.NewVersion(testPullRequests[2]),
+			},
+		},
 	}
 
 	for _, tc := range tests {

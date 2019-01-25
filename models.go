@@ -19,6 +19,7 @@ type Source struct {
 	DisableCISkip       bool     `json:"disable_ci_skip"`
 	SkipSSLVerification bool     `json:"skip_ssl_verification"`
 	DisableForks        bool     `json:"disable_forks"`
+	PR                  string   `json:"pr"`
 }
 
 // Validate the source configuration.

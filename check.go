@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"strconv"
 )
 
 // Check (business logic)
@@ -18,9 +19,15 @@ func Check(request CheckRequest, manager Github) (CheckResponse, error) {
 	}
 
 	disableSkipCI := request.Source.DisableCISkip
+	specifiedPr := request.Source.PR
 
 Loop:
 	for _, p := range pulls {
+		// If PR not the filtered
+		if !MatchesSpecifiedPR(specifiedPr, strconv.Itoa(p.Number)) {
+			continue
+		}
+
 		// [ci skip]/[skip ci] in Pull request title
 		if !disableSkipCI && ContainsSkipCI(p.Title) {
 			continue
@@ -83,7 +90,7 @@ Loop:
 	sort.Sort(response)
 
 	// If there are no new but an old version = return the old
-	if len(response) == 0 && request.Version.PR != "" {
+	if len(response) == 0 && request.Version.PR != "" && MatchesSpecifiedPR(specifiedPr, request.Version.PR) {
 		response = append(response, request.Version)
 	}
 	// If there are new versions and no previous = return just the latest
@@ -97,6 +104,11 @@ Loop:
 func ContainsSkipCI(s string) bool {
 	re := regexp.MustCompile("(?i)\\[(ci skip|skip ci)\\]")
 	return re.MatchString(s)
+}
+
+// Returns true if request.Source.PR matches pr number
+func MatchesSpecifiedPR(specifiedPr string, prNumber string) bool {
+	return specifiedPr == "" || specifiedPr == prNumber
 }
 
 // FilterIgnorePath ...
