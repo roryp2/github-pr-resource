@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 
@@ -17,13 +18,13 @@ import (
 )
 
 // Github for testing purposes.
-//go:generate mockgen -destination=mocks/mock_github.go -package=mocks github.com/telia-oss/github-pr-resource Github
+//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -o fakes/fake_github.go . Github
 type Github interface {
 	ListOpenPullRequests() ([]*PullRequest, error)
 	ListModifiedFiles(int) ([]string, error)
 	PostComment(string, string) error
 	GetPullRequest(string, string) (*PullRequest, error)
-	UpdateCommitStatus(string, string, string) error
+	UpdateCommitStatus(string, string, string, string, string, string) error
 }
 
 // GithubClient for handling requests to the Github V3 and V4 APIs.
@@ -245,19 +246,21 @@ func (m *GithubClient) GetPullRequest(prNumber, commitRef string) (*PullRequest,
 }
 
 // UpdateCommitStatus for a given commit (not supported by V4 API).
-func (m *GithubClient) UpdateCommitStatus(commitRef, statusContext, status string) error {
-	c := []string{"concourse-ci"}
-	if statusContext == "" {
-		c = append(c, "status")
-	} else {
-		c = append(c, statusContext)
+func (m *GithubClient) UpdateCommitStatus(commitRef, baseContext, statusContext, status, targetURL, description string) error {
+	if baseContext == "" {
+		baseContext = "concourse-ci"
 	}
-	statusContext = strings.Join(c, "/")
 
-	// Format build page
-	build := os.Getenv("ATC_EXTERNAL_URL")
-	if build != "" {
-		build = strings.Join([]string{build, "builds", os.Getenv("BUILD_ID")}, "/")
+	if statusContext == "" {
+		statusContext = "status"
+	}
+
+	if targetURL == "" {
+		targetURL = strings.Join([]string{os.Getenv("ATC_EXTERNAL_URL"), "builds", os.Getenv("BUILD_ID")}, "/")
+	}
+
+	if description == "" {
+		description = fmt.Sprintf("Concourse CI build %s", status)
 	}
 
 	_, _, err := m.V3.Repositories.CreateStatus(
@@ -267,9 +270,9 @@ func (m *GithubClient) UpdateCommitStatus(commitRef, statusContext, status strin
 		commitRef,
 		&github.RepoStatus{
 			State:       github.String(strings.ToLower(status)),
-			TargetURL:   github.String(build),
-			Description: github.String(fmt.Sprintf("Concourse CI build %s", status)),
-			Context:     github.String(statusContext),
+			TargetURL:   github.String(targetURL),
+			Description: github.String(description),
+			Context:     github.String(path.Join(baseContext, statusContext)),
 		},
 	)
 	return err

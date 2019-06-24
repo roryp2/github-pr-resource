@@ -21,6 +21,7 @@ type Source struct {
 	DisableForks        bool     `json:"disable_forks"`
 	GitCryptKey         string   `json:"git_crypt_key"`
 	PR                  string   `json:"pr"`
+	BaseBranch          string   `json:"base_branch"`
 }
 
 // Validate the source configuration.

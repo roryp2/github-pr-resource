@@ -25,14 +25,14 @@ Make sure to check out [#migrating](#migrating) to learn more.
 | `access_token`          | Yes      |                                  | A Github Access Token with repository access (required for setting status on commits). N.B. If you want github-pr-resource to work with a private repository. Set `repo:full` permissions on the access token you create on GitHub. If it is a public repository, `repo:status` is enough. |
 | `v3_endpoint`           | No       | `https://api.github.com`         | Endpoint to use for the V3 Github API (Restful).                                                                                                                                                                                                                                           |
 | `v4_endpoint`           | No       | `https://api.github.com/graphql` | Endpoint to use for the V4 Github API (Graphql).                                                                                                                                                                                                                                           |
-| `paths`                 | No       | `terraform/*/*.tf`               | Only produce new versions if the PR includes changes to files that match one or more glob patterns or prefixes.                                                                                                                                                                                         |
-| `ignore_paths`          | No       | `.ci/`                          | Inverse of the above. Pattern syntax is documented in [filepath.Match](https://golang.org/pkg/path/filepath/#Match), or a path prefix can be specified (e.g. `.ci/` will match everything in the `.ci` directory).                                                                                                                                                                        |
+| `paths`                 | No       | `terraform/*/*.tf`               | Only produce new versions if the PR includes changes to files that match one or more glob patterns or prefixes.                                                                                                                                                                            |
+| `ignore_paths`          | No       | `.ci/`                           | Inverse of the above. Pattern syntax is documented in [filepath.Match](https://golang.org/pkg/path/filepath/#Match), or a path prefix can be specified (e.g. `.ci/` will match everything in the `.ci` directory).                                                                         |
 | `disable_ci_skip`       | No       | `true`                           | Disable ability to skip builds with `[ci skip]` and `[skip ci]` in commit message or pull request title.                                                                                                                                                                                   |
 | `skip_ssl_verification` | No       | `true`                           | Disable SSL/TLS certificate validation on git and API clients. Use with care!                                                                                                                                                                                                              |
 | `disable_forks`         | No       | `true`                           | Disable triggering of the resource if the pull request's fork repository is different to the configured repository.                                                                                                                                                                        |
 | `git_crypt_key`         | No       | `AEdJVENSWVBUS0VZAAAAA...`       | Base64 encoded git-crypt key. Setting this will unlock / decrypt the repository with git-crypt. To get the key simply execute `git-crypt export-key -- - | base64` in an encrypted repository.
 | `pr`                    | No       | `34`                             | Only return commits from specified pull request number (ignores all commits from other pull requests)                                                                                                                                                                                      |
-
+| `base_branch`           | No       | `master`                         | Name of a branch. The pipeline will only trigger on pull requests against the specified branch.                                                                                                                                                                                            |
 Notes:
  - If `v3_endpoint` is set, `v4_endpoint` must also be set (and the other way around).
  - Look at the [Concourse Resources documentation](https://concourse-ci.org/resources.html#resource-webhook-token)
@@ -52,7 +52,7 @@ A version is represented as follows:
 If several commits are pushed to a given PR at the same time, the last commit will be the new version.
 
 **Note on webhooks:**
-This resource does not implement any caching, so it should work well with webhooks (should be subscribed to `push` events).
+This resource does not implement any caching, so it should work well with webhooks (should be subscribed to `push` and `pull_request` events).
 One thing to keep in mind however, is that pull requests that are opened from a fork and commits to said fork will not
 generate notifications over the webhook. So if you have a repository with little traffic and expect pull requests from forks,
  you'll need to discover those versions with `check_every: 1m` for instance. `check` in this resource is not a costly operation,
@@ -60,20 +60,22 @@ generate notifications over the webhook. So if you have a repository with little
 
 #### `get`
 
-|   Parameter     | Required | Example |                                             Description                                             |
-| --------------- | -------- | ------- | --------------------------------------------------------------------------------------------------- |
-| `skip_download` | No       | `true`  | Use with `get_params` in a `put` step to do nothing on the implicit get.                            |
+| Parameter          | Required | Example  | Description                                                                        |
+|--------------------|----------|----------|------------------------------------------------------------------------------------|
+| `skip_download`    | No       | `true`   | Use with `get_params` in a `put` step to do nothing on the implicit get.           |
+| `integration_tool` | No       | `rebase` | The integration tool to use, `merge`, `rebase` or `checkout`. Defaults to `merge`. |
+| `git_depth`        | No       | `1`      | Shallow clone the repository using the `--depth` Git option                        |
 
 Clones the base (e.g. `master` branch) at the latest commit, and merges the pull request at the specified commit
 into master. This ensures that we are both testing and setting status on the exact commit that was requested in
 input. Because the base of the PR is not locked to a specific commit in versions emitted from `check`, a fresh
-`get` will always use the latest commit in master and *report the SHA of said commit in the metadata*. Both the 
+`get` will always use the latest commit in master and *report the SHA of said commit in the metadata*. Both the
 requested version and the metadata emitted by `get` are available to your tasks as JSON:
 - `.git/resource/version.json`
 - `.git/resource/metadata.json`
 
-When specifying `skip_download` the pull request volume mounted to subsequent tasks will be empty, which is a problem 
-when you set e.g. the pending status before running the actual tests. The workaround for this is to use an alias for 
+When specifying `skip_download` the pull request volume mounted to subsequent tasks will be empty, which is a problem
+when you set e.g. the pending status before running the actual tests. The workaround for this is to use an alias for
 the `put` (see https://github.com/telia-oss/github-pr-resource/issues/32 for more details).
 
 git-crypt encrypted repositories will automatically be decrypted when the `git_crypt_key` is set in the source configuration.
@@ -82,26 +84,32 @@ git-crypt encrypted repositories will automatically be decrypted when the `git_c
 put: update-status <-- Use an alias for the pull-request resource
 resource: pull-request
 params:
-    path: pull-request 
-    status: pending 
+    path: pull-request
+    status: pending
 get_params: {skip_download: true}
 ```
 
 Note that, should you retrigger a build in the hopes of testing the last commit to a PR against a newer version of
 the base, Concourse will reuse the volume (i.e. not trigger a new `get`) if it still exists, which can produce
-unexpected results (#5). As such, re-testing a PR against a newer version of the base is best done by *pushing an 
+unexpected results (#5). As such, re-testing a PR against a newer version of the base is best done by *pushing an
 empty commit to the PR*.
 
 
 #### `put`
 
-|   Parameter    | Required |         Example         |                                             Description                                             |
-| -------------- | -------- | ----------------------- | --------------------------------------------------------------------------------------------------- |
-| `path`         | Yes      | `pull-request`          | The name given to the resource in a GET step.                                                       |
-| `status`       | No       | `SUCCESS`               | Set a status on a commit. One of `SUCCESS`, `PENDING`, `FAILURE` and `ERROR`.                       |
-| `context`      | No       | `unit-test`             | A context to use for the status. (Prefixed with `concourse-ci`, defaults to `concourse-ci/status`). |
-| `comment`      | No       | `hello world!`          | A comment to add to the pull request.                                                               |
-| `comment_file` | No       | `my-output/comment.txt` | Path to file containing a comment to add to the pull request (e.g. output of `terraform plan`).     |
+| Parameter      | Required | Example                             | Description                                                                                                       |
+|----------------|----------|-------------------------------------|-------------------------------------------------------------------------------------------------------------------|
+| `path`         | Yes      | `pull-request`                      | The name given to the resource in a GET step.                                                                     |
+| `status`       | No       | `SUCCESS`                           | Set a status on a commit. One of `SUCCESS`, `PENDING`, `FAILURE` and `ERROR`.                                     |
+| `base_context` | No       | `concourse-ci`                      | Base context (prefix) used for the status context. Defaults to `concourse-ci`.                                    |
+| `context`      | No       | `unit-test`                         | A context to use for the status, which is prefixed by `base_context`. Defaults to `status`.                       |
+| `comment`      | No       | `hello world!`                      | A comment to add to the pull request.                                                                             |
+| `comment_file` | No       | `my-output/comment.txt`             | Path to file containing a comment to add to the pull request (e.g. output of `terraform plan`).                   |
+| `target_url`   | No       | `$ATC_DEFAULT_URL/builds/$BUILD_ID` | The target URL for the status, where users are sent when clicking details (defaults to the Concourse build page). |
+| `description`  | No       | `Concourse CI build failed`         | The description status on the specified pull request.                                                             |
+
+Note that `comment`, `comment_file` and `target_url` will all expand environment variables, so in the examples above `$ATC_DEFAULT_URL` will be replaced by the public URL of the Concourse ATCs.
+See https://concourse-ci.org/implementing-resource-types.html#resource-metadata for more details about metadata that is available via environment variables.
 
 ## Example
 
@@ -189,6 +197,10 @@ If you are coming from [jtarchie/github-pullrequest-resource][original-resource]
   - `repo` -> `repository`
   - `ci_skip` -> `disable_ci_skip` (the logic has been inverted and its `true` by default)
   - `api_endpoint` -> `v3_endpoint`
+  - `base` -> `base_branch`
+  - `base_url` -> `target_url`
+- `get`:
+  - `git.depth` -> `git_depth`
 - `put`:
   - `comment` -> `comment_file` (because we added `comment`)
 
@@ -204,13 +216,16 @@ If you are coming from [jtarchie/github-pullrequest-resource][original-resource]
 
 #### Parameters that did not make it:
 - `src`:
-  - `base`: 
   - `require_review_approval`
   - `authorship_restriction`
   - `label`
   - `git_config`: You can now get the pr/author info from .git/resource/metadata.json instead
 - `get`:
-  - `git.*`
+  - `git.*` (with the exception of `git_depth`, see above)
 - `put`:
   - `merge.*`
   - `label`
+
+Note that if you are migrating from the original resource on a Concourse version prior to `v5.0.0`, you might
+see an error `failed to unmarshal request: json: unknown field "ref"`. The solution is to rename the resource
+so that the history is wiped. See [#64](https://github.com/telia-oss/github-pr-resource/issues/64) for details.

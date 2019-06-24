@@ -1,20 +1,12 @@
 language: go
 sudo: false
-services:
-  - docker
 matrix:
   include:
   - os: osx
-    go: 1.11.x
-    env:
-      - TARGET=darwin
-      - ARCH=amd64
+    go: 1.12.x
   - os: linux
-    go: 1.11.x
-    env:
-      - TARGET=linux
-      - ARCH=amd64
+    go: 1.12.x
 notifications:
   email: false
 script:
-- make build
+- go get -u -v github.com/go-task/task/cmd/task && task build

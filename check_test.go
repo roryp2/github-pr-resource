@@ -1,22 +1,22 @@
 package resource_test
 
 import (
-	"reflect"
 	"testing"
 
-	"github.com/golang/mock/gomock"
-	"github.com/telia-oss/github-pr-resource"
-	"github.com/telia-oss/github-pr-resource/mocks"
+	"github.com/stretchr/testify/assert"
+	resource "github.com/telia-oss/github-pr-resource"
+	"github.com/telia-oss/github-pr-resource/fakes"
 )
 
 var (
 	testPullRequests = []*resource.PullRequest{
-		createTestPR(1, true, false),
-		createTestPR(2, false, false),
-		createTestPR(3, false, false),
-		createTestPR(4, false, false),
-		createTestPR(5, false, true),
-		createTestPR(6, false, false),
+		createTestPR(1, "master", true, false),
+		createTestPR(2, "master", false, false),
+		createTestPR(3, "master", false, false),
+		createTestPR(4, "master", false, false),
+		createTestPR(5, "master", false, true),
+		createTestPR(6, "master", false, false),
+		createTestPR(7, "develop", false, false),
 	}
 )
 
@@ -165,33 +165,38 @@ func TestCheck(t *testing.T) {
 				resource.NewVersion(testPullRequests[2]),
 			},
 		},
+		{
+			description: "check supports specifying base branch",
+			source: resource.Source{
+				Repository:  "itsdalmo/test-repository",
+				AccessToken: "oauthtoken",
+				BaseBranch:  "develop",
+			},
+			version:      resource.Version{},
+			pullRequests: testPullRequests,
+			files:        [][]string{},
+			expected: resource.CheckResponse{
+				resource.NewVersion(testPullRequests[6]),
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
+			github := new(fakes.FakeGithub)
+			github.ListOpenPullRequestsReturns(tc.pullRequests, nil)
 
-			github := mocks.NewMockGithub(ctrl)
-			github.EXPECT().ListOpenPullRequests().Times(1).Return(tc.pullRequests, nil)
-
-			if len(tc.files) > 0 {
-				// TODO: Figure out how to do this in a loop with variables. As is, it will break when adding new tests.
-				gomock.InOrder(
-					github.EXPECT().ListModifiedFiles(gomock.Any()).Times(1).Return(tc.files[0], nil),
-					github.EXPECT().ListModifiedFiles(gomock.Any()).Times(1).Return(tc.files[1], nil),
-				)
+			for i, file := range tc.files {
+				github.ListModifiedFilesReturnsOnCall(i, file, nil)
 			}
 
 			input := resource.CheckRequest{Source: tc.source, Version: tc.version}
 			output, err := resource.Check(input, github)
-			if err != nil {
-				t.Fatalf("unexpected error: %s", err)
-			}
 
-			if got, want := output, tc.expected; !reflect.DeepEqual(got, want) {
-				t.Errorf("\ngot:\n%v\nwant:\n%v\n", got, want)
+			if assert.NoError(t, err) {
+				assert.Equal(t, tc.expected, output)
 			}
+			assert.Equal(t, 1, github.ListOpenPullRequestsCallCount())
 		})
 	}
 }
@@ -242,9 +247,7 @@ func TestContainsSkipCI(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
 			got := resource.ContainsSkipCI(tc.message)
-			if got != tc.want {
-				t.Errorf("\ngot:\n%v\nwant:\n%v\n", got, tc.want)
-			}
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -310,11 +313,8 @@ func TestFilterPath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.description, func(t *testing.T) {
 			got, err := resource.FilterPath(tc.files, tc.pattern)
-			if err != nil {
-				t.Fatalf("unexpected error: %s", err)
-			}
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("\ngot:\n%v\nwant:\n%s\n", got, tc.want)
+			if assert.NoError(t, err) {
+				assert.Equal(t, tc.want, got)
 			}
 		})
 	}
@@ -381,11 +381,8 @@ func TestFilterIgnorePath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.description, func(t *testing.T) {
 			got, err := resource.FilterIgnorePath(tc.files, tc.pattern)
-			if err != nil {
-				t.Fatalf("unexpected error: %s", err)
-			}
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("\ngot:\n%v\nwant:\n%s\n", got, tc.want)
+			if assert.NoError(t, err) {
+				assert.Equal(t, tc.want, got)
 			}
 		})
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -36,30 +37,29 @@ func Put(request PutRequest, manager Github, inputDir string) (*PutResponse, err
 	}
 
 	// Set status if specified
-	if status := request.Params.Status; status != "" {
-		if err := manager.UpdateCommitStatus(version.Commit, request.Params.Context, status); err != nil {
+	if p := request.Params; p.Status != "" {
+		if err := manager.UpdateCommitStatus(version.Commit, p.BaseContext, p.Context, p.Status, os.ExpandEnv(p.TargetURL), p.Description); err != nil {
 			return nil, fmt.Errorf("failed to set status: %s", err)
 		}
 	}
 
 	// Set comment if specified
-	if comment := request.Params.Comment; comment != "" {
-		err = manager.PostComment(version.PR, comment)
+	if p := request.Params; p.Comment != "" {
+		err = manager.PostComment(version.PR, os.ExpandEnv(p.Comment))
 		if err != nil {
 			return nil, fmt.Errorf("failed to post comment: %s", err)
 		}
 	}
 
 	// Set comment from a file
-	if cf := request.Params.CommentFile; cf != "" {
-		path := filepath.Join(inputDir, request.Params.CommentFile)
-		content, err := ioutil.ReadFile(path)
+	if p := request.Params; p.CommentFile != "" {
+		content, err := ioutil.ReadFile(filepath.Join(inputDir, p.CommentFile))
 		if err != nil {
 			return nil, fmt.Errorf("failed to read comment file: %s", err)
 		}
 		comment := string(content)
 		if comment != "" {
-			err = manager.PostComment(version.PR, comment)
+			err = manager.PostComment(version.PR, os.ExpandEnv(comment))
 			if err != nil {
 				return nil, fmt.Errorf("failed to post comment: %s", err)
 			}
@@ -87,7 +87,10 @@ type PutResponse struct {
 // PutParameters for the resource.
 type PutParameters struct {
 	Path        string `json:"path"`
+	BaseContext string `json:"base_context"`
 	Context     string `json:"context"`
+	TargetURL   string `json:"target_url"`
+	Description string `json:"description"`
 	Status      string `json:"status"`
 	CommentFile string `json:"comment_file"`
 	Comment     string `json:"comment"`

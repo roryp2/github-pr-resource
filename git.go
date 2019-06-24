@@ -14,13 +14,15 @@ import (
 )
 
 // Git interface for testing purposes.
-//go:generate mockgen -destination=mocks/mock_git.go -package=mocks github.com/telia-oss/github-pr-resource Git
+//go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -o fakes/fake_git.go . Git
 type Git interface {
 	Init(string) error
-	Pull(string, string) error
+	Pull(string, string, int) error
 	RevParse(string) (string, error)
-	Fetch(string, int) error
+	Fetch(string, int, int) error
+	Checkout(string, string) error
 	Merge(string) error
+	Rebase(string, string) error
 	GitCryptUnlock(string) error
 }
 
@@ -69,12 +71,17 @@ func (g *GitClient) Init(branch string) error {
 }
 
 // Pull ...
-func (g *GitClient) Pull(uri, branch string) error {
+func (g *GitClient) Pull(uri, branch string, depth int) error {
 	endpoint, err := g.Endpoint(uri)
 	if err != nil {
 		return err
 	}
-	cmd := g.command("git", "pull", endpoint+".git", branch)
+
+	args := []string{"pull", endpoint + ".git", branch}
+	if depth > 0 {
+		args = append(args, "--depth", strconv.Itoa(depth))
+	}
+	cmd := g.command("git", args...)
 
 	// Discard output to have zero chance of logging the access token.
 	cmd.Stdout = ioutil.Discard
@@ -98,12 +105,17 @@ func (g *GitClient) RevParse(branch string) (string, error) {
 }
 
 // Fetch ...
-func (g *GitClient) Fetch(uri string, prNumber int) error {
+func (g *GitClient) Fetch(uri string, prNumber int, depth int) error {
 	endpoint, err := g.Endpoint(uri)
 	if err != nil {
 		return err
 	}
-	cmd := g.command("git", "fetch", endpoint, fmt.Sprintf("pull/%s/head", strconv.Itoa(prNumber)))
+
+	args := []string{"fetch", endpoint, fmt.Sprintf("pull/%s/head", strconv.Itoa(prNumber))}
+	if depth > 0 {
+		args = append(args, "--depth", strconv.Itoa(depth))
+	}
+	cmd := g.command("git", args...)
 
 	// Discard output to have zero chance of logging the access token.
 	cmd.Stdout = ioutil.Discard
@@ -115,10 +127,27 @@ func (g *GitClient) Fetch(uri string, prNumber int) error {
 	return nil
 }
 
+// CheckOut
+func (g *GitClient) Checkout(branch, sha string) error {
+	if err := g.command("git", "checkout", "-b", branch, sha).Run(); err != nil {
+		return fmt.Errorf("checkout failed: %s", err)
+	}
+
+	return nil
+}
+
 // Merge ...
 func (g *GitClient) Merge(sha string) error {
 	if err := g.command("git", "merge", sha, "--no-stat").Run(); err != nil {
 		return fmt.Errorf("merge failed: %s", err)
+	}
+	return nil
+}
+
+// Rebase ...
+func (g *GitClient) Rebase(baseRef string, headSha string) error {
+	if err := g.command("git", "rebase", baseRef, headSha).Run(); err != nil {
+		return fmt.Errorf("rebase failed: %s", err)
 	}
 	return nil
 }
@@ -135,7 +164,9 @@ func (g *GitClient) GitCryptUnlock(base64key string) error {
 		return fmt.Errorf("failed to decode git-crypt key")
 	}
 	keyPath := filepath.Join(keyDir, "git-crypt-key")
-	ioutil.WriteFile(keyPath, decodedKey, 600)
+	if err := ioutil.WriteFile(keyPath, decodedKey, 600); err != nil {
+		return fmt.Errorf("failed to write git-crypt key to file: %s", err)
+	}
 	if err := g.command("git-crypt", "unlock", keyPath).Run(); err != nil {
 		return fmt.Errorf("git-crypt unlock failed: %s", err)
 	}
