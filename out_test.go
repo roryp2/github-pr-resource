@@ -33,7 +33,7 @@ func TestPut(t *testing.T) {
 				CommittedDate: time.Time{},
 			},
 			parameters:  resource.PutParameters{},
-			pullRequest: createTestPR(1, "master", false, false),
+			pullRequest: createTestPR(1, "master", false, false, 0, nil),
 		},
 
 		{
@@ -50,7 +50,7 @@ func TestPut(t *testing.T) {
 			parameters: resource.PutParameters{
 				Status: "success",
 			},
-			pullRequest: createTestPR(1, "master", false, false),
+			pullRequest: createTestPR(1, "master", false, false, 0, nil),
 		},
 
 		{
@@ -68,7 +68,7 @@ func TestPut(t *testing.T) {
 				Status:  "failure",
 				Context: "build",
 			},
-			pullRequest: createTestPR(1, "master", false, false),
+			pullRequest: createTestPR(1, "master", false, false, 0, nil),
 		},
 
 		{
@@ -87,7 +87,7 @@ func TestPut(t *testing.T) {
 				BaseContext: "concourse-ci-custom",
 				Context:     "build",
 			},
-			pullRequest: createTestPR(1, "master", false, false),
+			pullRequest: createTestPR(1, "master", false, false, 0, nil),
 		},
 
 		{
@@ -105,7 +105,7 @@ func TestPut(t *testing.T) {
 				Status:    "failure",
 				TargetURL: "https://targeturl.com/concourse",
 			},
-			pullRequest: createTestPR(1, "master", false, false),
+			pullRequest: createTestPR(1, "master", false, false, 0, nil),
 		},
 
 		{
@@ -123,7 +123,7 @@ func TestPut(t *testing.T) {
 				Status:      "failure",
 				Description: "Concourse CI build",
 			},
-			pullRequest: createTestPR(1, "master", false, false),
+			pullRequest: createTestPR(1, "master", false, false, 0, nil),
 		},
 
 		{
@@ -140,7 +140,24 @@ func TestPut(t *testing.T) {
 			parameters: resource.PutParameters{
 				Comment: "comment",
 			},
-			pullRequest: createTestPR(1, "master", false, false),
+			pullRequest: createTestPR(1, "master", false, false, 0, nil),
+		},
+
+		{
+			description: "we can delete previous comments made on the pull request",
+			source: resource.Source{
+				Repository:  "itsdalmo/test-repository",
+				AccessToken: "oauthtoken",
+			},
+			version: resource.Version{
+				PR:            "pr1",
+				Commit:        "commit1",
+				CommittedDate: time.Time{},
+			},
+			parameters: resource.PutParameters{
+				DeletePreviousComments: true,
+			},
+			pullRequest: createTestPR(1, "master", false, false, 0, []string{}),
 		},
 	}
 
@@ -181,11 +198,19 @@ func TestPut(t *testing.T) {
 					assert.Equal(t, tc.parameters.Status, status)
 				}
 			}
+
 			if tc.parameters.Comment != "" {
 				if assert.Equal(t, 1, github.PostCommentCallCount()) {
 					pr, comment := github.PostCommentArgsForCall(0)
 					assert.Equal(t, tc.version.PR, pr)
 					assert.Equal(t, tc.parameters.Comment, comment)
+				}
+			}
+
+			if tc.parameters.DeletePreviousComments {
+				if assert.Equal(t, 1, github.DeletePreviousCommentsCallCount()) {
+					pr := github.DeletePreviousCommentsArgsForCall(0)
+					assert.Equal(t, tc.version.PR, pr)
 				}
 			}
 		})
@@ -195,8 +220,8 @@ func TestPut(t *testing.T) {
 func TestVariableSubstitution(t *testing.T) {
 
 	var (
-		variableName  = "EXAMPLE_VARIABLE"
-		variableValue = "value"
+		variableName  = "BUILD_JOB_NAME"
+		variableValue = "my-job"
 		variableURL   = "https://concourse-ci.org/"
 	)
 
@@ -225,7 +250,7 @@ func TestVariableSubstitution(t *testing.T) {
 				Comment: fmt.Sprintf("$%s", variableName),
 			},
 			expectedComment: variableValue,
-			pullRequest:     createTestPR(1, "master", false, false),
+			pullRequest:     createTestPR(1, "master", false, false, 0, nil),
 		},
 
 		{
@@ -244,7 +269,25 @@ func TestVariableSubstitution(t *testing.T) {
 				TargetURL: fmt.Sprintf("%s$%s", variableURL, variableName),
 			},
 			expectedTargetURL: fmt.Sprintf("%s%s", variableURL, variableValue),
-			pullRequest:       createTestPR(1, "master", false, false),
+			pullRequest:       createTestPR(1, "master", false, false, 0, nil),
+		},
+
+		{
+			description: "we do not substitute variables other then concourse build metadata",
+			source: resource.Source{
+				Repository:  "itsdalmo/test-repository",
+				AccessToken: "oauthtoken",
+			},
+			version: resource.Version{
+				PR:            "pr1",
+				Commit:        "commit1",
+				CommittedDate: time.Time{},
+			},
+			parameters: resource.PutParameters{
+				Comment: "$THIS_IS_NOT_SUBSTITUTED",
+			},
+			expectedComment: "$THIS_IS_NOT_SUBSTITUTED",
+			pullRequest:     createTestPR(1, "master", false, false, 0, nil),
 		},
 	}
 

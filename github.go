@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/go-github/github"
+	"github.com/google/go-github/v28/github"
 	"github.com/shurcooL/githubv4"
 	"golang.org/x/oauth2"
 )
@@ -24,7 +24,9 @@ type Github interface {
 	ListModifiedFiles(int) ([]string, error)
 	PostComment(string, string) error
 	GetPullRequest(string, string) (*PullRequest, error)
+	GetChangedFiles(string, string) ([]ChangedFileObject, error)
 	UpdateCommitStatus(string, string, string, string, string, string) error
+	DeletePreviousComments(string) error
 }
 
 // GithubClient for handling requests to the Github V3 and V4 APIs.
@@ -103,6 +105,9 @@ func (m *GithubClient) ListOpenPullRequests() ([]*PullRequest, error) {
 				Edges []struct {
 					Node struct {
 						PullRequestObject
+						Reviews struct {
+							TotalCount int
+						} `graphql:"reviews(states: $prReviewStates)"`
 						Commits struct {
 							Edges []struct {
 								Node struct {
@@ -110,6 +115,13 @@ func (m *GithubClient) ListOpenPullRequests() ([]*PullRequest, error) {
 								}
 							}
 						} `graphql:"commits(last:$commitsLast)"`
+						Labels struct {
+							Edges []struct {
+								Node struct {
+									LabelObject
+								}
+							}
+						} `graphql:"labels(first:$labelsFirst)"`
 					}
 				}
 				PageInfo struct {
@@ -127,6 +139,8 @@ func (m *GithubClient) ListOpenPullRequests() ([]*PullRequest, error) {
 		"prStates":        []githubv4.PullRequestState{githubv4.PullRequestStateOpen},
 		"prCursor":        (*githubv4.String)(nil),
 		"commitsLast":     githubv4.Int(1),
+		"prReviewStates":  []githubv4.PullRequestReviewState{githubv4.PullRequestReviewStateApproved},
+		"labelsFirst":     githubv4.Int(100),
 	}
 
 	var response []*PullRequest
@@ -135,10 +149,17 @@ func (m *GithubClient) ListOpenPullRequests() ([]*PullRequest, error) {
 			return nil, err
 		}
 		for _, p := range query.Repository.PullRequests.Edges {
+			labels := make([]LabelObject, len(p.Node.Labels.Edges))
+			for _, l := range p.Node.Labels.Edges {
+				labels = append(labels, l.Node.LabelObject)
+			}
+
 			for _, c := range p.Node.Commits.Edges {
 				response = append(response, &PullRequest{
-					PullRequestObject: p.Node.PullRequestObject,
-					Tip:               c.Node.Commit,
+					PullRequestObject:   p.Node.PullRequestObject,
+					Tip:                 c.Node.Commit,
+					ApprovedReviewCount: p.Node.Reviews.TotalCount,
+					Labels:              labels,
 				})
 			}
 		}
@@ -198,6 +219,62 @@ func (m *GithubClient) PostComment(prNumber, comment string) error {
 	return err
 }
 
+// GetChangedFiles ...
+func (m *GithubClient) GetChangedFiles(prNumber string, commitRef string) ([]ChangedFileObject, error) {
+	pr, err := strconv.Atoi(prNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert pull request number to int: %s", err)
+	}
+
+	var cfo []ChangedFileObject
+
+	var filequery struct {
+		Repository struct {
+			PullRequest struct {
+				Files struct {
+					Edges []struct {
+						Node struct {
+							ChangedFileObject
+						}
+					} `graphql:"edges"`
+					PageInfo struct {
+						EndCursor   githubv4.String
+						HasNextPage bool
+					} `graphql:"pageInfo"`
+				} `graphql:"files(first:$changedFilesFirst, after: $changedFilesEndCursor)"`
+			} `graphql:"pullRequest(number:$prNumber)"`
+		} `graphql:"repository(owner:$repositoryOwner,name:$repositoryName)"`
+	}
+
+	offset := ""
+
+	for {
+		vars := map[string]interface{}{
+			"repositoryOwner":       githubv4.String(m.Owner),
+			"repositoryName":        githubv4.String(m.Repository),
+			"prNumber":              githubv4.Int(pr),
+			"changedFilesFirst":     githubv4.Int(100),
+			"changedFilesEndCursor": githubv4.String(offset),
+		}
+
+		if err := m.V4.Query(context.TODO(), &filequery, vars); err != nil {
+			return nil, err
+		}
+
+		for _, f := range filequery.Repository.PullRequest.Files.Edges {
+			cfo = append(cfo, ChangedFileObject{Path: f.Node.Path})
+		}
+
+		if !filequery.Repository.PullRequest.Files.PageInfo.HasNextPage {
+			break
+		}
+
+		offset = string(filequery.Repository.PullRequest.Files.PageInfo.EndCursor)
+	}
+
+	return cfo, nil
+}
+
 // GetPullRequest ...
 func (m *GithubClient) GetPullRequest(prNumber, commitRef string) (*PullRequest, error) {
 	pr, err := strconv.Atoi(prNumber)
@@ -231,6 +308,7 @@ func (m *GithubClient) GetPullRequest(prNumber, commitRef string) (*PullRequest,
 	if err := m.V4.Query(context.TODO(), &query, vars); err != nil {
 		return nil, err
 	}
+
 	for _, c := range query.Repository.PullRequest.Commits.Edges {
 		if c.Node.Commit.OID == commitRef {
 			// Return as soon as we find the correct ref.
@@ -276,6 +354,56 @@ func (m *GithubClient) UpdateCommitStatus(commitRef, baseContext, statusContext,
 		},
 	)
 	return err
+}
+
+func (m *GithubClient) DeletePreviousComments(prNumber string) error {
+	pr, err := strconv.Atoi(prNumber)
+	if err != nil {
+		return fmt.Errorf("failed to convert pull request number to int: %s", err)
+	}
+
+	var getComments struct {
+		Viewer struct {
+			Login string
+		}
+		Repository struct {
+			PullRequest struct {
+				Id       string
+				Comments struct {
+					Edges []struct {
+						Node struct {
+							DatabaseId int64
+							Author     struct {
+								Login string
+							}
+						}
+					}
+				} `graphql:"comments(last:$commentsLast)"`
+			} `graphql:"pullRequest(number:$prNumber)"`
+		} `graphql:"repository(owner:$repositoryOwner,name:$repositoryName)"`
+	}
+
+	vars := map[string]interface{}{
+		"repositoryOwner": githubv4.String(m.Owner),
+		"repositoryName":  githubv4.String(m.Repository),
+		"prNumber":        githubv4.Int(pr),
+		"commentsLast":    githubv4.Int(100),
+	}
+
+	if err := m.V4.Query(context.TODO(), &getComments, vars); err != nil {
+		return err
+	}
+
+	for _, e := range getComments.Repository.PullRequest.Comments.Edges {
+		if e.Node.Author.Login == getComments.Viewer.Login {
+			_, err := m.V3.Issues.DeleteComment(context.TODO(), m.Owner, m.Repository, e.Node.DatabaseId)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func parseRepository(s string) (string, string, error) {

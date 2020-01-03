@@ -38,14 +38,33 @@ func Put(request PutRequest, manager Github, inputDir string) (*PutResponse, err
 
 	// Set status if specified
 	if p := request.Params; p.Status != "" {
-		if err := manager.UpdateCommitStatus(version.Commit, p.BaseContext, p.Context, p.Status, os.ExpandEnv(p.TargetURL), p.Description); err != nil {
+		description := p.Description
+
+		// Set description from a file
+		if p.DescriptionFile != "" {
+			content, err := ioutil.ReadFile(filepath.Join(inputDir, p.DescriptionFile))
+			if err != nil {
+				return nil, fmt.Errorf("failed to read description file: %s", err)
+			}
+			description = string(content)
+		}
+
+		if err := manager.UpdateCommitStatus(version.Commit, p.BaseContext, p.Context, p.Status, safeExpandEnv(p.TargetURL), description); err != nil {
 			return nil, fmt.Errorf("failed to set status: %s", err)
+		}
+	}
+
+	// Delete previous comments if specified
+	if request.Params.DeletePreviousComments {
+		err = manager.DeletePreviousComments(version.PR)
+		if err != nil {
+			return nil, fmt.Errorf("failed to delete previous comments: %s", err)
 		}
 	}
 
 	// Set comment if specified
 	if p := request.Params; p.Comment != "" {
-		err = manager.PostComment(version.PR, os.ExpandEnv(p.Comment))
+		err = manager.PostComment(version.PR, safeExpandEnv(p.Comment))
 		if err != nil {
 			return nil, fmt.Errorf("failed to post comment: %s", err)
 		}
@@ -59,7 +78,7 @@ func Put(request PutRequest, manager Github, inputDir string) (*PutResponse, err
 		}
 		comment := string(content)
 		if comment != "" {
-			err = manager.PostComment(version.PR, os.ExpandEnv(comment))
+			err = manager.PostComment(version.PR, safeExpandEnv(comment))
 			if err != nil {
 				return nil, fmt.Errorf("failed to post comment: %s", err)
 			}
@@ -86,14 +105,16 @@ type PutResponse struct {
 
 // PutParameters for the resource.
 type PutParameters struct {
-	Path        string `json:"path"`
-	BaseContext string `json:"base_context"`
-	Context     string `json:"context"`
-	TargetURL   string `json:"target_url"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
-	CommentFile string `json:"comment_file"`
-	Comment     string `json:"comment"`
+	Path                   string `json:"path"`
+	BaseContext            string `json:"base_context"`
+	Context                string `json:"context"`
+	TargetURL              string `json:"target_url"`
+	DescriptionFile        string `json:"description_file"`
+	Description            string `json:"description"`
+	Status                 string `json:"status"`
+	CommentFile            string `json:"comment_file"`
+	Comment                string `json:"comment"`
+	DeletePreviousComments bool   `json:"delete_previous_comments"`
 }
 
 // Validate the put parameters.
@@ -118,4 +139,14 @@ func (p *PutParameters) Validate() error {
 	}
 
 	return nil
+}
+
+func safeExpandEnv(s string) string {
+	return os.Expand(s, func(v string) string {
+		switch v {
+		case "BUILD_ID", "BUILD_NAME", "BUILD_JOB_NAME", "BUILD_PIPELINE_NAME", "BUILD_TEAM_NAME", "ATC_EXTERNAL_URL":
+			return os.Getenv(v)
+		}
+		return "$" + v
+	})
 }
