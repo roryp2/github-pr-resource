@@ -1,0 +1,119 @@
+jobs:
+- build_logs_to_retain: 3
+  name: build-github-pr-resource
+  plan:
+  - in_parallel:
+      steps:
+      - get: concourse-base
+        timeout: 5m
+      - get: container-base
+        params:
+          format: oci
+        timeout: 5m
+      - get: container-builder
+        params:
+          format: oci
+        timeout: 5m
+      - get: builder-task
+        timeout: 5m
+      - get: src
+        resource: github-pr-resource
+        timeout: 5m
+        trigger: true
+  - config:
+      inputs:
+      - name: src
+      - name: container-base
+      - name: container-builder
+      outputs:
+      - name: image
+      params:
+        BUILD_ARG_CONCOURSE_INSTANCE: ((concourse.host))
+        BUILD_ARG_NPM_TOKEN: ((npm_token))
+        BUILD_ARG_VERSION: 1.0.0
+        CONTEXT: src/.
+        DOCKERFILE: src/Dockerfile
+        IMAGE_ARG_base_image: container-base/image.tar
+        IMAGE_ARG_builder_image: container-builder/image.tar
+        REGISTRY_MIRRORS: ((image_registry.artifactory_docker_mirror))
+      platform: linux
+      run:
+        path: build
+    image: builder-task
+    privileged: true
+    task: build
+    timeout: 20m
+  - config:
+      outputs:
+      - name: additional_tags
+      params:
+        VERSION: 1.0.0
+      platform: linux
+      run:
+        args:
+        - -ec
+        - |
+          #!/bin/bash
+          echo -n "$VERSION" > tags.txt
+        dir: additional_tags
+        path: /bin/bash
+    image: concourse-base
+    task: additional-tags
+    timeout: 5m
+  - no_get: true
+    params:
+      additional_tags: additional_tags/tags.txt
+      image: image/image.tar
+    put: artifactory
+    timeout: 10m
+  public: true
+resources:
+- name: artifactory
+  source:
+    password: ((artifactory.password))
+    repository: ((image_registry.artifactory_docker_registry))/concourse/github-pr-resource
+    tag: 1.0.0
+    username: ((artifactory.username))
+  type: registry-image
+- name: builder-task
+  source:
+    password: ((artifactory.password))
+    repository: ((image_registry.artifactory_docker_mirror))/vito/oci-build-task
+    username: ((artifactory.username))
+  type: registry-image
+- check_every: 24h0m0s
+  icon: docker
+  name: concourse-base
+  source:
+    password: ((artifactory.password))
+    repository: ((image_registry.artifactory_docker_mirror))/concourse/base.node-18
+    tag: 7.9.1
+    username: ((artifactory.username))
+  type: registry-image
+- check_every: 24h0m0s
+  icon: docker
+  name: container-base
+  source:
+    password: ((artifactory.password))
+    repository: ((image_registry.artifactory_docker_mirror))/alpine
+    tag: latest
+    username: ((artifactory.username))
+  type: registry-image
+- check_every: 24h0m0s
+  icon: docker
+  name: container-builder
+  source:
+    password: ((artifactory.password))
+    repository: ((image_registry.artifactory_docker_mirror))/golang
+    tag: latest
+    username: ((artifactory.username))
+  type: registry-image
+- check_every: 1h0m0s
+  icon: github
+  name: github-pr-resource
+  source:
+    branch: master
+    paths: null
+    private_key: ((github.private_key))
+    uri: git@github.com:roryp2/github-pr-resource.git
+  type: git
