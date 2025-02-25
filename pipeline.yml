@@ -35,7 +35,7 @@ jobs:
         DOCKERFILE: src/Dockerfile
         IMAGE_ARG_base_image: container-base/image.tar
         IMAGE_ARG_builder_image: container-builder/image.tar
-        REGISTRY_MIRRORS: ((image_registry.artifactory_docker_mirror))
+        REGISTRY_MIRRORS: ((docker.registry_mirror))
       platform: linux
       run:
         path: build
@@ -70,43 +70,43 @@ jobs:
 resources:
 - name: artifactory
   source:
-    password: ((artifactory.password))
-    repository: ((image_registry.artifactory_docker_registry))/concourse/github-pr-resource
+    password: ((docker.password))
+    repository: ((docker.registry))/concourse/github-pr-resource
     tag: 1.0.0
-    username: ((artifactory.username))
+    username: ((docker.username))
   type: registry-image
 - name: builder-task
   source:
-    password: ((artifactory.password))
-    repository: ((image_registry.artifactory_docker_mirror))/vito/oci-build-task
-    username: ((artifactory.username))
+    password: ((docker.password))
+    repository: ((docker.registry_mirror))/vito/oci-build-task
+    username: ((docker.username))
   type: registry-image
 - check_every: 24h0m0s
   icon: docker
   name: concourse-base
   source:
-    password: ((artifactory.password))
-    repository: ((image_registry.artifactory_docker_mirror))/concourse/base.node-18
-    tag: 7.9.1
-    username: ((artifactory.username))
+    password: ((docker.password))
+    repository: ((docker.registry_mirror))/concourse/base.node-18
+    tag: latest
+    username: ((docker.username))
   type: registry-image
 - check_every: 24h0m0s
   icon: docker
   name: container-base
   source:
-    password: ((artifactory.password))
-    repository: ((image_registry.artifactory_docker_mirror))/alpine
+    password: ((docker.password))
+    repository: ((docker.registry_mirror))/alpine
     tag: latest
-    username: ((artifactory.username))
+    username: ((docker.username))
   type: registry-image
 - check_every: 24h0m0s
   icon: docker
   name: container-builder
   source:
-    password: ((artifactory.password))
-    repository: ((image_registry.artifactory_docker_mirror))/golang
+    password: ((docker.password))
+    repository: ((docker.registry_mirror))/golang
     tag: latest
-    username: ((artifactory.username))
+    username: ((docker.username))
   type: registry-image
 - check_every: 1h0m0s
   icon: github
